@@ -323,7 +323,7 @@ Resources:
                 - ""
                 - - !GetAtt LambdaS3ImagesUploadFunction.Arn
   
-  S3WebsiteBucket:   ### this is for the front end website
+  S3WebsiteBucket:   ### this is for the front end website needs to be moved to cloudfront
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: PublicRead
@@ -362,3 +362,9 @@ Outputs:
       - ""
       - - "https://"
         - !GetAtt CloudFrontImagesDistribution.DomainName
+  FrontendUrl:
+    Description: Frontend Url
+    Value: !Join
+      - ""
+      - - "https://"
+        - !GetAtt S3WebsiteBucket.DomainName
