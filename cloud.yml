@@ -323,7 +323,7 @@ Resources:
                 - ""
                 - - !GetAtt LambdaS3ImagesUploadFunction.Arn
   
-  S3WebsiteBucket:   ### this is for the front end website needs to be moved to cloudfront
+  S3WebsiteBucket:   ### TEMPORARY: move to frontend and use outputs from this for deployment
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: PublicRead
@@ -342,6 +342,32 @@ Resources:
               - PUT
             AllowedOrigins:
               - '*'
+  
+  CloudFrontWebsiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - OPTIONS
+            - HEAD
+          CachedMethods:
+            - GET
+            - OPTIONS
+            - HEAD
+          Compress: Yes
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: none
+          TargetOriginId: S3WebsiteBucket
+          ViewerProtocolPolicy: allow-all
+        Origins:
+          - Id: S3WebsiteBucket
+            DomainName: !GetAtt S3WebsiteBucket.DomainName
+            S3OriginConfig: {}
 
 Outputs:
   GraphQLUrl:
@@ -367,4 +393,4 @@ Outputs:
     Value: !Join
       - ""
       - - "https://"
-        - !GetAtt S3WebsiteBucket.DomainName
+        - !GetAtt CloudFrontWebsiteDistribution.DomainName
