@@ -1,0 +1,95 @@
+
+#--------------------------------------------------------------------------------------------------------
+
+type Image {
+  key: String
+  bucket: String
+}
+
+input ImageInput {
+  key: String!
+  bucket: String!
+}
+
+#--------------------------------------------------------------------------------------------------------
+
+type Point {
+  x: String!
+  y: String!
+}
+
+input PointInput {
+  x: String!
+  y: String!
+}
+
+#--------------------------------------------------------------------------------------------------------
+
+type Overlay {
+  type: String
+  fill: String
+  stroke: String
+  points: [Point]
+}
+
+input OverlayInput {
+  type: String!
+  fill: String
+  stroke: String
+  points: [PointInput]
+}
+
+#--------------------------------------------------------------------------------------------------------
+
+type Drawboard {
+  id: ID
+  image: Image
+  title: String
+  overlays: [Overlay]
+}
+
+type DrawboardConnection {
+  items: [Drawboard]
+  nextToken: String
+}
+
+input CreateDrawboardInput {
+  title: String!
+  image: ImageInput!
+  overlays: [OverlayInput]
+}
+
+input UpdateDrawboardInput {
+  id: ID!
+  title: String
+  overlays: [OverlayInput]
+}
+
+input DeleteDrawboardInput {
+  id: ID!
+}
+
+#--------------------------------------------------------------------------------------------------------
+
+type Mutation {
+  createDrawboard(input: CreateDrawboardInput!): Drawboard
+  deleteDrawboard(input: DeleteDrawboardInput!): Drawboard
+  updateDrawboard(input: UpdateDrawboardInput!): Drawboard
+}
+
+type Query {
+  getDrawboard(id: ID!): Drawboard
+  listDrawboards(limit: Int, nextToken: String): DrawboardConnection
+  getS3UploadPolicy: AWSJSON
+}
+
+type Subscription {
+	onCreateDrawboard(id: ID, title: String, overlays: [OverlayInput], image: ImageInput): Drawboard
+		@aws_subscribe(mutations: ["createDrawboard"])
+	onDeleteDrawboard(id: ID, title: String, overlays: [OverlayInput], image: ImageInput): Drawboard
+		@aws_subscribe(mutations: ["deleteDrawboard"])
+	onUpdateDrawboard(id: ID, title: String, overlays: [OverlayInput], image: ImageInput): Drawboard
+		@aws_subscribe(mutations: ["updateDrawboard"])
+}
+
+#--------------------------------------------------------------------------------------------------------
