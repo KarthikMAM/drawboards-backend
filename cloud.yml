@@ -1,0 +1,364 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: A simple drawboards Api with overlay drawing support
+
+Parameters:
+  Stage:
+    Type: String
+    Default: staging
+    AllowedPattern: "^[A-Za-z0-9]{1,}$"
+
+Resources:
+  DynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - "-"
+        - - DynamoDBRole
+          - !Sub ${Stage}
+      ManagedPolicyArns:
+        - Ref: DynamoDBPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+    DependsOn:
+      - DynamoDBPolicy
+
+  DynamoDBPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource:
+              - !Join
+                - ""
+                - - !GetAtt DynamoDBDrawboardsTable.Arn
+                  - "*"
+
+  DynamoDBDrawboardsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: title
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: NameSecondaryIndex
+          KeySchema:
+            - AttributeName: title
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+
+  AppSyncGraphQLApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      AuthenticationType: API_KEY
+      Name: !Join
+        - "_"
+        - - "drawboards"
+          - !Sub ${Stage}
+
+  AppSyncGraphQLApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+
+  AppSyncGraphQLSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      DefinitionS3Location: ./schema.gql
+
+  AppSyncDrawboardsDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Type: AMAZON_DYNAMODB
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      Name: !Join
+        - "_"
+        - - "drawboards"
+          - !Sub ${Stage}
+      ServiceRoleArn: !GetAtt DynamoDBRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref DynamoDBDrawboardsTable
+        AwsRegion: !Sub ${AWS::Region}
+
+  AppSyncCreateDrawboardResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: createDrawboard
+      DataSourceName: !GetAtt AppSyncDrawboardsDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/drawboards/create/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/drawboards/create/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  AppSyncDeleteDrawboardResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: deleteDrawboard
+      DataSourceName: !GetAtt AppSyncDrawboardsDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/drawboards/delete/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/drawboards/delete/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  AppSyncUpdateDrawboardResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: updateDrawboard
+      DataSourceName: !GetAtt AppSyncDrawboardsDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/drawboards/update/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/drawboards/update/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  AppSyncGetDrawboardResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Query
+      FieldName: getDrawboard
+      DataSourceName: !GetAtt AppSyncDrawboardsDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/drawboards/get/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/drawboards/get/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  AppSyncListDrawboardsResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Query
+      FieldName: listDrawboards
+      DataSourceName: !GetAtt AppSyncDrawboardsDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/drawboards/list/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/drawboards/list/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  S3ImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration: ### very very bad setup
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration: ### very very bad setup
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - POST
+              - PUT
+            AllowedOrigins:
+              - '*'
+
+  CloudFrontImagesDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - OPTIONS
+            - HEAD
+          CachedMethods:
+            - GET
+            - OPTIONS
+            - HEAD
+          Compress: Yes
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: none
+          TargetOriginId: S3ImagesBucket
+          ViewerProtocolPolicy: allow-all
+        Origins:
+          - Id: S3ImagesBucket
+            DomainName: !GetAtt S3ImagesBucket.DomainName
+            S3OriginConfig: {}
+
+  LambdaS3ImagesUploadFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt LambdaS3ImagesUploadFunctionRole.Arn
+      Handler: policy.handler
+      Runtime: nodejs8.10
+      MemorySize: 128
+      Timeout: 3
+      Environment:
+        Variables:
+          Bucket: !Ref S3ImagesBucket
+      Code: ./lambda/images/policy.js
+
+  LambdaS3ImagesUploadFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - "-"
+        - - LambdaS3ImagesUploadFunctionRole
+          - !Sub ${Stage}
+      ManagedPolicyArns:
+        - Ref: LambdaS3ImagesUploadFunctionPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+    DependsOn:
+      - LambdaS3ImagesUploadFunctionPolicy
+
+  LambdaS3ImagesUploadFunctionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:putObject
+              - s3:putObjectAcl
+            Resource:
+              - !Join
+                - ""
+                - - !GetAtt S3ImagesBucket.Arn
+              - !Join
+                - ""
+                - - !GetAtt S3ImagesBucket.Arn
+                  - "/*"
+
+  AppSyncLambdaS3ImagesUploadFunctionDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Type: AWS_LAMBDA
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      Name: !Join
+        - "_"
+        - - "lambda_s3_images_upload_function"
+          - !Sub ${Stage}
+      ServiceRoleArn: !GetAtt AppSyncLambdaS3ImagesUploadFunctionExecutionRole.Arn
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt LambdaS3ImagesUploadFunction.Arn
+
+  AppSyncGetS3UploadPolicyResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncGraphQLApi.ApiId
+      TypeName: Query
+      FieldName: getS3UploadPolicy
+      DataSourceName: !GetAtt AppSyncLambdaS3ImagesUploadFunctionDataSource.Name
+      RequestMappingTemplateS3Location: ./resolvers/images/policy/request.vtl
+      ResponseMappingTemplateS3Location: ./resolvers/images/policy/response.vtl
+    DependsOn:
+      - AppSyncGraphQLSchema
+
+  AppSyncLambdaS3ImagesUploadFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - "-"
+        - - AppSyncLambdaS3ImagesUploadFunctionExecutionRole
+          - !Sub ${Stage}
+      ManagedPolicyArns:
+        - Ref: AppSyncLambdaS3ImagesUploadFunctionExecutionPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+    DependsOn:
+      - AppSyncLambdaS3ImagesUploadFunctionExecutionPolicy
+
+  AppSyncLambdaS3ImagesUploadFunctionExecutionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Join
+                - ""
+                - - !GetAtt LambdaS3ImagesUploadFunction.Arn
+  
+  S3WebsiteBucket:   ### this is for the front end website
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration: ### very very bad setup
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration: ### very very bad setup
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - POST
+              - PUT
+            AllowedOrigins:
+              - '*'
+
+Outputs:
+  GraphQLUrl:
+    Description: GraphQL endpoint for clients
+    Value: !GetAtt AppSyncGraphQLApi.GraphQLUrl
+  ApiKey:
+    Description: API key for clients
+    Value: !GetAtt AppSyncGraphQLApiKey.ApiKey
+  ImagesBucketUrl:
+    Description: Images bucket url
+    Value: !Join
+      - ""
+      - - "https://"
+        - !GetAtt S3ImagesBucket.DomainName
+  ImagesCloudfrontUrl:
+    Description: Images cloudfront url
+    Value: !Join
+      - ""
+      - - "https://"
+        - !GetAtt CloudFrontImagesDistribution.DomainName
